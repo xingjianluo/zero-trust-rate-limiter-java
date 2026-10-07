@@ -34,7 +34,9 @@ public class RateLimitConfig {
         return new ApplicationRunner() {
             @Override
             public void run(ApplicationArguments args) {
-                long version = rateLimitService.reload(properties);
+                // 重启时优先恢复最近一次持久化的策略（分层/权重等），无则用启动配置
+                RateLimitProperties effective = rateLimitService.startupProperties(properties);
+                long version = rateLimitService.publishInitial(effective);
                 log.info("Initial rate-limit policy published as version {}", version);
             }
         };

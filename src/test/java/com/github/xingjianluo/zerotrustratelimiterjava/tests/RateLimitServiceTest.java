@@ -89,7 +89,7 @@ class RateLimitServiceTest {
         Decision limited = first.stream().filter(d -> d.reason() == DecisionReason.RATE_LIMITED)
                 .findFirst().orElseThrow();
         assertEquals(T0 - T0 % WINDOW, limited.windowStart());
-        assertEquals(6, limited.currentCount());
+        assertEquals(5, limited.currentCount(), "被拒不消耗配额，用量保持在上限");
 
         // 切换窗口后计数重新开始
         clock.advance(WINDOW);

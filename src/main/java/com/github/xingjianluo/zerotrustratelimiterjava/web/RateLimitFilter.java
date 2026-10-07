@@ -102,8 +102,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
         body.put("degraded", decision.degraded());
         body.put("degradedCause", decision.degradedCause());
         body.put("retryAfterMillis", decision.retriedAfterMillis());
+        body.put("requestWeight", decision.requestWeight());
+        body.put("replayed", decision.replayed());
         if (decision.limitedBy() != null) {
             body.put("limitedBy", decision.limitedBy().name());
+            body.put("limitedByTier", decision.limitedByTier());
+            body.put("tierName", decision.tierName());
+            body.put("tierLimit", decision.tierLimit());
+            body.put("currentUsage", decision.currentCount());
+            body.put("tierRemaining", decision.tierRemaining());
         }
         if (decision.banLevel() > 0) {
             body.put("banLevel", decision.banLevel());

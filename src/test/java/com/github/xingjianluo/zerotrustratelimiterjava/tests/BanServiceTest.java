@@ -47,20 +47,20 @@ class BanServiceTest {
 
     @Test
     void consecutiveLimitedWindowsEscalateToBanLevel1() {
-        banService.recordLimitedWindow("1.1.1.1", 1000L, policy);
+        banService.recordLimitedWindow("1.1.1.1", 1000L, policy, clock.nowMillis());
         assertEquals(0, store.find("1.1.1.1").orElseThrow().level());
 
-        BanRecord afterSecond = banService.recordLimitedWindow("1.1.1.1", 2000L, policy);
+        BanRecord afterSecond = banService.recordLimitedWindow("1.1.1.1", 2000L, policy, clock.nowMillis());
         assertEquals(1, afterSecond.level());
         assertEquals(T0 + 100, afterSecond.bannedUntil());
         assertEquals(100, afterSecond.banDurationMillis());
-        assertTrue(banService.checkActiveBan("1.1.1.1", policy).isPresent());
+        assertTrue(banService.checkActiveBan("1.1.1.1", policy, clock.nowMillis()).isPresent());
     }
 
     @Test
     void repeatedOverLimitInSameWindowCountedOnce() {
-        banService.recordLimitedWindow("1.1.1.1", 1000L, policy);
-        banService.recordLimitedWindow("1.1.1.1", 1000L, policy); // 同窗口不重复计数
+        banService.recordLimitedWindow("1.1.1.1", 1000L, policy, clock.nowMillis());
+        banService.recordLimitedWindow("1.1.1.1", 1000L, policy, clock.nowMillis()); // 同窗口不重复计数
         BanRecord r = store.find("1.1.1.1").orElseThrow();
         assertEquals(1, r.consecutiveLimitedWindows());
         assertEquals(0, r.level());
@@ -68,16 +68,16 @@ class BanServiceTest {
 
     @Test
     void banExpiresThenReoffendingInObserveWindowEscalatesLevel2() {
-        banService.recordLimitedWindow("1.1.1.1", 1000L, policy);
-        banService.recordLimitedWindow("1.1.1.1", 2000L, policy); // 1 级封禁
-        assertEquals(1, banService.checkActiveBan("1.1.1.1", policy).orElseThrow().level());
+        banService.recordLimitedWindow("1.1.1.1", 1000L, policy, clock.nowMillis());
+        banService.recordLimitedWindow("1.1.1.1", 2000L, policy, clock.nowMillis()); // 1 级封禁
+        assertEquals(1, banService.checkActiveBan("1.1.1.1", policy, clock.nowMillis()).orElseThrow().level());
 
         clock.advance(100); // 封禁到期
-        assertTrue(banService.checkActiveBan("1.1.1.1", policy).isEmpty());
+        assertTrue(banService.checkActiveBan("1.1.1.1", policy, clock.nowMillis()).isEmpty());
 
         // 观察期内再犯：连续两个窗口超限 -> 重新封禁且级别 2，时长取第二档
-        banService.recordLimitedWindow("1.1.1.1", 3000L, policy);
-        BanRecord reBanned = banService.recordLimitedWindow("1.1.1.1", 4000L, policy);
+        banService.recordLimitedWindow("1.1.1.1", 3000L, policy, clock.nowMillis());
+        BanRecord reBanned = banService.recordLimitedWindow("1.1.1.1", 4000L, policy, clock.nowMillis());
         assertEquals(2, reBanned.level());
         assertEquals(T0 + 100 + 500, reBanned.bannedUntil());
         assertEquals(500, reBanned.banDurationMillis());
@@ -85,13 +85,13 @@ class BanServiceTest {
 
     @Test
     void cleanRecordAfterObserveWindowResetsLevel() {
-        banService.recordLimitedWindow("1.1.1.1", 1000L, policy);
-        banService.recordLimitedWindow("1.1.1.1", 2000L, policy); // 1 级
+        banService.recordLimitedWindow("1.1.1.1", 1000L, policy, clock.nowMillis());
+        banService.recordLimitedWindow("1.1.1.1", 2000L, policy, clock.nowMillis()); // 1 级
         clock.advance(100); // 到期
-        banService.checkActiveBan("1.1.1.1", policy); // 触发解除，进入观察期
+        banService.checkActiveBan("1.1.1.1", policy, clock.nowMillis()); // 触发解除，进入观察期
 
         clock.advance(1000); // 观察期满且未再犯
-        Optional<BanRecord> active = banService.checkActiveBan("1.1.1.1", policy);
+        Optional<BanRecord> active = banService.checkActiveBan("1.1.1.1", policy, clock.nowMillis());
         assertTrue(active.isEmpty());
         BanRecord reset = store.find("1.1.1.1").orElseThrow();
         assertEquals(0, reset.level());
@@ -100,24 +100,24 @@ class BanServiceTest {
 
     @Test
     void manualUnbanTakesEffectImmediatelyAndClearsState() {
-        banService.recordLimitedWindow("1.1.1.1", 1000L, policy);
-        banService.recordLimitedWindow("1.1.1.1", 2000L, policy);
-        assertTrue(banService.checkActiveBan("1.1.1.1", policy).isPresent());
+        banService.recordLimitedWindow("1.1.1.1", 1000L, policy, clock.nowMillis());
+        banService.recordLimitedWindow("1.1.1.1", 2000L, policy, clock.nowMillis());
+        assertTrue(banService.checkActiveBan("1.1.1.1", policy, clock.nowMillis()).isPresent());
 
         BanRecord unbanned = banService.unban("1.1.1.1");
         assertEquals(0, unbanned.level());
         assertEquals(0, unbanned.bannedUntil());
         assertEquals(0, unbanned.consecutiveLimitedWindows());
-        assertTrue(banService.checkActiveBan("1.1.1.1", policy).isEmpty());
+        assertTrue(banService.checkActiveBan("1.1.1.1", policy, clock.nowMillis()).isEmpty());
     }
 
     @Test
     void normalTrafficIsNeverBanned() {
         // 只有 1 个超限窗口、然后窗口计数不连续 -> 永不升级
-        banService.recordLimitedWindow("1.1.1.1", 1000L, policy);
+        banService.recordLimitedWindow("1.1.1.1", 1000L, policy, clock.nowMillis());
         clock.advance(10_000);
-        banService.recordLimitedWindow("1.1.1.1", 12_000L, policy);
+        banService.recordLimitedWindow("1.1.1.1", 12_000L, policy, clock.nowMillis());
         assertEquals(0, store.find("1.1.1.1").orElseThrow().level());
-        assertTrue(banService.checkActiveBan("1.1.1.1", policy).isEmpty());
+        assertTrue(banService.checkActiveBan("1.1.1.1", policy, clock.nowMillis()).isEmpty());
     }
 }

@@ -11,9 +11,12 @@ import java.util.Optional;
 /**
  * 临时封禁领域服务：封禁检查、超限后的升级、到期/观察期解除、人工解除。
  *
+ * <p>分层配额下，封禁只由“封禁维度对应层”的窗口超限事件驱动；连续窗口的相邻判断
+ * 使用 {@link RateLimitPolicy#windowMillis()}（封禁维度层的窗口长度）。
+ *
  * <p>升级与恢复规则（确定、稳定）：
  * <ol>
- *   <li>每个限流窗口内该来源第一次超限时 {@code consecutiveLimitedWindows} +1（同窗口重复超限不重复计数）。</li>
+ *   <li>每个封禁窗口内该来源第一次超限时 {@code consecutiveLimitedWindows} +1（同窗口重复超限不重复计数）。</li>
  *   <li>连续超限窗口数达到 {@code banThreshold}：封禁级别 +1，按新级别取封禁时长并写入
  *       {@code bannedUntil}；封禁时长在此时固化进记录，之后策略调整不改变既有封禁。</li>
  *   <li>封禁到期：自动解除，记录进入观察期（保留级别）。观察期内再次超限 → 立即重新封禁且级别再 +1。</li>
@@ -21,6 +24,9 @@ import java.util.Optional;
  *   <li>正常请求从不调用本服务，不会被误封；人工解除立即清零并持久化。</li>
  * </ol>
  * 所有状态变更通过 {@link BanStateStore#compute} 原子完成。
+ *
+ * <p>所有方法接受显式 {@code nowMillis}：由编排层在一次请求开始时取一次时间传入，
+ * 保证同一次判定（含重试回放）时间基准一致、可测试。
  */
 @Service
 public class BanService {
@@ -38,29 +44,28 @@ public class BanService {
      *
      * @return 封禁中的记录；未封禁（含刚被自动解除/重置）返回 empty
      */
-    public Optional<BanRecord> checkActiveBan(String key, RateLimitPolicy policy) {
-        long now = clock.nowMillis();
-        BanRecord r = store.compute(key, cur -> advance(cur, now, policy));
-        return r.bannedUntil() > now ? Optional.of(r) : Optional.empty();
+    public Optional<BanRecord> checkActiveBan(String key, RateLimitPolicy policy, long nowMillis) {
+        BanRecord r = store.compute(key, cur -> advance(cur, nowMillis, policy));
+        return r.bannedUntil() > nowMillis ? Optional.of(r) : Optional.empty();
     }
 
     /**
-     * 记录一次“窗口超限”事件。同一窗口内的重复超限不重复计数。
+     * 记录一次“封禁维度窗口超限”事件。同一窗口内的重复超限不重复计数。
      *
      * @return 更新后的记录（可能因此变为封禁状态）
      */
-    public BanRecord recordLimitedWindow(String key, long windowStart, RateLimitPolicy policy) {
-        long now = clock.nowMillis();
+    public BanRecord recordLimitedWindow(String key, long windowStart, RateLimitPolicy policy, long nowMillis) {
         return store.compute(key, cur -> {
-            BanRecord advanced = advance(cur, now, policy);
+            BanRecord advanced = advance(cur, nowMillis, policy);
             // 同窗口重复超限不累计
             if (advanced.lastLimitedWindowStart() == windowStart) {
                 return advanced;
             }
-            // “连续超限窗口”要求窗口相邻：与上次超限窗口间隔超过一个窗口，说明中间存在
+            // “连续超限窗口”要求窗口相邻：与上次超限窗口间隔超过一个封禁维度窗口，说明中间存在
             // 未超限窗口，违规链中断，计数从本次重新开始。
+            long windowMillis = policy.windowMillis();
             boolean streakBroken = advanced.lastLimitedWindowStart() > 0
-                    && windowStart - advanced.lastLimitedWindowStart() > policy.windowMillis();
+                    && windowStart - advanced.lastLimitedWindowStart() > windowMillis;
             int consecutive = streakBroken ? 1 : advanced.consecutiveLimitedWindows() + 1;
             int level = advanced.level();
             long bannedUntil = 0L;
@@ -68,7 +73,7 @@ public class BanService {
             if (consecutive >= policy.banThreshold()) {
                 level = level + 1;
                 duration = durationForLevel(level, policy);
-                bannedUntil = now + duration;
+                bannedUntil = nowMillis + duration;
                 consecutive = 0;
             }
             return new BanRecord(
@@ -80,7 +85,7 @@ public class BanService {
                     windowStart,
                     advanced.releasedAt(),
                     bannedUntil > 0 ? policy.version() : advanced.policyVersionAtBan(),
-                    now);
+                    nowMillis);
         });
     }
 
@@ -99,6 +104,11 @@ public class BanService {
         return store.findAll().stream()
                 .map(r -> BanView.from(r, now))
                 .toList();
+    }
+
+    /** 单个来源的当前记录（只读，供配额视图聚合封禁状态）。 */
+    public Optional<BanRecord> find(String key) {
+        return store.find(key);
     }
 
     /**

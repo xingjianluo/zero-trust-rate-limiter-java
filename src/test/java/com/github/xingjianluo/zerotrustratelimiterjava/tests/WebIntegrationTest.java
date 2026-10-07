@@ -6,6 +6,7 @@ import com.github.xingjianluo.zerotrustratelimiterjava.config.RateLimitPropertie
 import com.github.xingjianluo.zerotrustratelimiterjava.core.RateLimitService;
 import com.github.xingjianluo.zerotrustratelimiterjava.store.FileBanStateStore;
 import com.github.xingjianluo.zerotrustratelimiterjava.store.InMemoryRateLimitStateStore;
+import com.github.xingjianluo.zerotrustratelimiterjava.model.LimitDimension;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -28,6 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest(properties = {
         "ratelimit.storage.ban-state-file=",
+        "ratelimit.storage.quota-state-file=",
         "ratelimit.policy.window=1s",
         "ratelimit.policy.limit=3",
         "ratelimit.ban.enabled=false",
@@ -133,6 +135,54 @@ class WebIntegrationTest {
         } finally {
             rateStore.setFaultUnavailable(false);
         }
+    }
+
+    @Test
+    void tieredRejectionBodyNamesTierAndQuotaViewMatches() throws Exception {
+        // 分层配置：IP 短窗口 1s 上限 2；GLOBAL 1s 上限 100
+        RateLimitProperties p = new RateLimitProperties();
+        p.getPolicy().setWindow(Duration.ofMillis(1000));
+        p.getPolicy().setTiers(List.of(
+                new RateLimitProperties.Tier(LimitDimension.IP, Duration.ofMillis(1000), 2),
+                new RateLimitProperties.Tier(LimitDimension.GLOBAL, Duration.ofMillis(1000), 100)));
+        p.getBan().setEnabled(false);
+        p.getBan().setLevelDuration(List.of(Duration.ofMinutes(1)));
+        p.getStorage().setTimeout(Duration.ofMillis(100));
+        p.getStorage().setFailMode(com.github.xingjianluo.zerotrustratelimiterjava.model.FailMode.FAIL_CLOSED);
+        rateStore.reset();
+        banStore.reset();
+        rateLimitService.reload(p);
+
+        mockMvc.perform(get("/api/hello").header("X-Forwarded-For", "10.7.0.1").header("X-Request-Id", "t-1"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/hello").header("X-Forwarded-For", "10.7.0.1").header("X-Request-Id", "t-2"))
+                .andExpect(status().isOk());
+        MvcResult rejected = mockMvc.perform(get("/api/hello")
+                        .header("X-Forwarded-For", "10.7.0.1").header("X-Request-Id", "t-3"))
+                .andExpect(status().is(429))
+                .andReturn();
+        JsonNode body = mapper.readTree(rejected.getResponse().getContentAsString());
+        assertEquals("RATE_LIMITED", body.get("reason").asText());
+        assertEquals(0, body.get("limitedByTier").asInt());
+        assertEquals("tier[0]:IP:1000ms", body.get("tierName").asText());
+        assertEquals(2, body.get("tierLimit").asInt());
+        assertEquals(2, body.get("currentUsage").asInt());
+        assertEquals(0, body.get("tierRemaining").asInt());
+        assertEquals(1, body.get("requestWeight").asInt());
+
+        // 只读视图与判定同源：短窗口已用 2、剩余 0
+        MvcResult view = mockMvc.perform(get("/admin/quota")
+                        .param("dimension", "IP").param("key", "10.7.0.1"))
+                .andExpect(status().isOk()).andReturn();
+        JsonNode viewBody = mapper.readTree(view.getResponse().getContentAsString());
+        assertEquals("IP", viewBody.get("dimension").asText());
+        assertEquals("10.7.0.1", viewBody.get("key").asText());
+        assertEquals(false, viewBody.get("banned").asBoolean());
+        JsonNode tiers = viewBody.get("tiers");
+        assertEquals(1, tiers.size(), "IP 维度只有一层");
+        assertEquals(2, tiers.get(0).get("used").asInt());
+        assertEquals(0, tiers.get(0).get("remaining").asInt());
+        assertEquals(2, tiers.get(0).get("limit").asInt());
     }
 
     private void reloadConfig(long limit, String failMode, long timeoutMs) throws Exception {

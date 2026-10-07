@@ -39,12 +39,15 @@ public class DefaultDecisionAuditLog implements DecisionAuditLog {
         log.info("rate-limit decision requestId={} input=[ip={}, user={}, method={}, path={}] "
                         + "result=[allowed={}, reason={}, detail={}, policyVersion={}, windowStart={}, "
                         + "currentCount={}, limitedBy={}, banLevel={}, banUntil={}, degraded={}, "
-                        + "degradedCause={}, retryAfterMillis={}]",
+                        + "degradedCause={}, retryAfterMillis={}, requestWeight={}, limitedByTier={}, "
+                        + "tierName={}, tierLimit={}, tierRemaining={}, replayed={}]",
                 request.requestId(), request.ip(), request.user(), request.method(), request.path(),
                 decision.allowed(), decision.reason(), decision.detail(), decision.policyVersion(),
                 decision.windowStart(), decision.currentCount(), decision.limitedBy(),
                 decision.banLevel(), decision.banUntil(), decision.degraded(),
-                decision.degradedCause(), decision.retriedAfterMillis());
+                decision.degradedCause(), decision.retriedAfterMillis(), decision.requestWeight(),
+                decision.limitedByTier(), decision.tierName(), decision.tierLimit(),
+                decision.tierRemaining(), decision.replayed());
     }
 
     @Override
