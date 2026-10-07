@@ -15,4 +15,10 @@ public class DemoController {
     public Map<String, Object> hello() {
         return Map.of("message", "ok");
     }
+
+    /** 模拟资源消耗较重的导出类接口（配额权重示例端点）。 */
+    @GetMapping("/export/report")
+    public Map<String, Object> exportReport() {
+        return Map.of("message", "exported");
+    }
 }

@@ -28,6 +28,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest(properties = {
         "ratelimit.storage.ban-state-file=",
+        "ratelimit.storage.rate-state-file=",
         "ratelimit.policy.window=1s",
         "ratelimit.policy.limit=3",
         "ratelimit.ban.enabled=false",

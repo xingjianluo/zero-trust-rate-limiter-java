@@ -2,13 +2,17 @@ package com.github.xingjianluo.zerotrustratelimiterjava.web;
 
 import com.github.xingjianluo.zerotrustratelimiterjava.config.RateLimitProperties;
 import com.github.xingjianluo.zerotrustratelimiterjava.core.BanService;
+import com.github.xingjianluo.zerotrustratelimiterjava.core.QuotaViewService;
 import com.github.xingjianluo.zerotrustratelimiterjava.core.RateLimitService;
 import com.github.xingjianluo.zerotrustratelimiterjava.model.BanView;
+import com.github.xingjianluo.zerotrustratelimiterjava.model.LimitDimension;
+import com.github.xingjianluo.zerotrustratelimiterjava.model.QuotaView;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -24,10 +28,13 @@ public class AdminController {
 
     private final RateLimitService rateLimitService;
     private final BanService banService;
+    private final QuotaViewService quotaViewService;
 
-    public AdminController(RateLimitService rateLimitService, BanService banService) {
+    public AdminController(RateLimitService rateLimitService, BanService banService,
+                           QuotaViewService quotaViewService) {
         this.rateLimitService = rateLimitService;
         this.banService = banService;
+        this.quotaViewService = quotaViewService;
     }
 
     /** 查询当前策略版本（热更新边界可由此观察）。 */
@@ -51,6 +58,16 @@ public class AdminController {
     @GetMapping("/bans")
     public List<BanView> bans() {
         return banService.listBans();
+    }
+
+    /**
+     * 配额只读视图：按维度与来源键查各层用量/剩余/封禁状态，
+     * 数值与入口判定共用同一份状态。例如 {@code GET /admin/quota?dimension=IP&key=1.2.3.4}。
+     */
+    @GetMapping("/quota")
+    public QuotaView quota(@RequestParam("dimension") String dimension,
+                           @RequestParam("key") String key) {
+        return quotaViewService.view(LimitDimension.valueOf(dimension.trim().toUpperCase()), key);
     }
 
     /** 人工解除指定来源封禁：立即清零并持久化。 */

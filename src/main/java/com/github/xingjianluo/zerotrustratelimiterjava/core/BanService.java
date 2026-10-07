@@ -47,9 +47,21 @@ public class BanService {
     /**
      * 记录一次“窗口超限”事件。同一窗口内的重复超限不重复计数。
      *
+     * <p>分层配额下由 {@link #recordLimitedWindow(String, long, long, RateLimitPolicy)}
+     * 传入触发层自己的窗口长度，判断“相邻窗口”时以该层窗口为准；不同层的事件通过
+     * 各自的窗口起点区分，短窗口层的重复超限不会错误打断长窗口层的连续计数。
+     *
      * @return 更新后的记录（可能因此变为封禁状态）
      */
     public BanRecord recordLimitedWindow(String key, long windowStart, RateLimitPolicy policy) {
+        return recordLimitedWindow(key, windowStart, policy.windowMillis(), policy);
+    }
+
+    /**
+     * 记录一次“窗口超限”事件，并显式给出触发分层的窗口长度（毫秒）。
+     */
+    public BanRecord recordLimitedWindow(String key, long windowStart, long layerWindowMillis,
+                                         RateLimitPolicy policy) {
         long now = clock.nowMillis();
         return store.compute(key, cur -> {
             BanRecord advanced = advance(cur, now, policy);
@@ -57,10 +69,10 @@ public class BanService {
             if (advanced.lastLimitedWindowStart() == windowStart) {
                 return advanced;
             }
-            // “连续超限窗口”要求窗口相邻：与上次超限窗口间隔超过一个窗口，说明中间存在
-            // 未超限窗口，违规链中断，计数从本次重新开始。
+            // “连续超限窗口”要求窗口相邻：与上次超限窗口间隔超过该触发层的一个窗口，
+            // 说明中间存在未超限窗口，违规链中断，计数从本次重新开始。
             boolean streakBroken = advanced.lastLimitedWindowStart() > 0
-                    && windowStart - advanced.lastLimitedWindowStart() > policy.windowMillis();
+                    && windowStart - advanced.lastLimitedWindowStart() > layerWindowMillis;
             int consecutive = streakBroken ? 1 : advanced.consecutiveLimitedWindows() + 1;
             int level = advanced.level();
             long bannedUntil = 0L;
@@ -91,6 +103,11 @@ public class BanService {
         long now = clock.nowMillis();
         return store.compute(key, cur -> new BanRecord(
                 key, 0, 0L, 0L, 0, 0L, now, 0L, now));
+    }
+
+    /** 只读查询单个来源的当前记录（不推进到期/观察期状态，供只读视图使用）。 */
+    public Optional<BanRecord> findRecord(String key) {
+        return store.find(key);
     }
 
     /** 列出全部来源状态视图。 */

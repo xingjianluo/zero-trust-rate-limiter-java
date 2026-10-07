@@ -69,6 +69,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
         Decision decision = rateLimitService.decide(context);
         response.setHeader("X-RateLimit-Decision", decision.reason().name());
         response.setHeader("X-RateLimit-Policy-Version", Long.toString(decision.policyVersion()));
+        if (decision.replay()) {
+            response.setHeader("X-RateLimit-Replay", "true");
+        }
+        if (decision.layerName() != null) {
+            response.setHeader("X-RateLimit-Layer", decision.layerName());
+        }
 
         switch (decision.reason()) {
             case ALLOWED -> filterChain.doFilter(request, response);
@@ -105,6 +111,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (decision.limitedBy() != null) {
             body.put("limitedBy", decision.limitedBy().name());
         }
+        if (decision.layerName() != null) {
+            body.put("layerName", decision.layerName());
+            body.put("layerLimit", decision.layerLimit());
+            body.put("used", decision.currentCount());
+            body.put("remaining", decision.remaining());
+        }
+        if (decision.weight() >= 0) {
+            body.put("weight", decision.weight());
+        }
+        body.put("replay", decision.replay());
         if (decision.banLevel() > 0) {
             body.put("banLevel", decision.banLevel());
             body.put("banUntil", decision.banUntil());

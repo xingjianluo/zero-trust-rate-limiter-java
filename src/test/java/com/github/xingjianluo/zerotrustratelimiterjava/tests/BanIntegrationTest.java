@@ -42,7 +42,7 @@ class BanIntegrationTest {
     @BeforeEach
     void setUp(@TempDir Path tempDir) {
         clock = new ManualClock(T0);
-        rateStore = new InMemoryRateLimitStateStore();
+        rateStore = new InMemoryRateLimitStateStore(clock);
         banStore = new FileBanStateStore(clock, tempDir.resolve("ban.json").toString());
         banService = new BanService(banStore, clock);
         auditLog = new DefaultDecisionAuditLog(clock);
